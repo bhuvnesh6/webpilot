@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, csrf %}
+{% block title %}{{ t.name }}{% endblock %}
+{% block content %}
+<div id="task-root" data-task-id="{{ t._id }}" data-poll-url="{{ url_for('tasks.api_status', task_id=t._id) }}"
+     data-respond-url="{{ url_for('tasks.respond', task_id=t._id) }}" data-last-seq="{{ actions[-1].seq if actions else 0 }}"
+     data-terminal="{{ '1' if terminal else '0' }}">
+<div class="wp-page-head">
+  <div><h1 class="mb-1">{{ t.name }}</h1><span class="wp-mono small text-muted">{{ t._id }}</span></div>
+  <div class="d-flex gap-2 align-items-center">
+    <span id="status-badge">{{ badge(t.status) }}</span>
+    {% if not terminal %}<form method="post" action="{{ url_for('tasks.cancel', task_id=t._id) }}" data-confirm="Request a stop? The agent stops at its next safe checkpoint.">{{ csrf() }}<button class="btn btn-outline-danger btn-sm" id="stop-btn" {{ 'disabled' if t.status == 'cancel_requested' }}>Request stop</button></form>{% endif %}
+    {% if retryable %}<form method="post" action="{{ url_for('tasks.retry', task_id=t._id) }}" {% if t.consequential_actions %}data-confirm="This task already performed {{ t.consequential_actions }} approved consequential action(s). Retrying may repeat them. Continue?"{% endif %}>{{ csrf() }}<button class="btn btn-outline-secondary btn-sm">Retry as new task</button></form>{% endif %}
+  </div>
+</div>
+
+<div id="prompt-panel" class="wp-prompt" {% if not t.pending_prompt %}hidden{% endif %} role="alert">
+  <strong id="prompt-title">The agent needs you</strong>
+  <p id="prompt-message" class="mb-2">{{ t.pending_prompt.message if t.pending_prompt }}</p>
+  <div class="d-flex gap-2 align-items-center flex-wrap" data-prompt-id="{{ t.pending_prompt.id if t.pending_prompt }}" id="prompt-actions">
+    <input class="form-control form-control-sm w-auto flex-grow-1" id="prompt-text" placeholder="Optional note for the agent" maxlength="500">
+    <button class="btn btn-sm btn-primary" data-answer="1" id="prompt-approve">Approve / continue</button>
+    <button class="btn btn-sm btn-outline-danger" data-answer="0" id="prompt-deny">Deny</button>
+  </div>
+</div>
+
+{% if t.error %}<div class="alert alert-danger" role="alert"><strong>{{ t.error.code }}</strong>: {{ t.error.message }}</div>{% endif %}
+{% if t.summary %}<div class="alert alert-secondary" role="status">{{ t.summary }}</div>{% endif %}
+
+<dl class="wp-meta">
+  <div><dt>Website</dt><dd>{{ t.website_snapshot.name }} <span class="wp-mono small text-muted">{{ t.website_snapshot.start_url }}</span></dd></div>
+  <div><dt>Progress</dt><dd id="m-progress">{{ t.progress_message or '-' }}</dd></div>
+  <div><dt>Current URL</dt><dd class="wp-mono small" id="m-url">{{ t.current_url or '-' }}</dd></div>
+  <div><dt>Current action</dt><dd class="wp-mono small" id="m-action">{{ t.current_action or '-' }}</dd></div>
+  <div><dt>Started</dt><dd>{{ t.started_at | dt }}</dd></div>
+  <div><dt>Completed</dt><dd id="m-completed">{{ t.completed_at | dt }}</dd></div>
+  <div><dt>Actions executed</dt><dd id="m-actions">{{ t.actions_executed }} of {{ t.max_actions }}</dd></div>
+  <div><dt>Result rows</dt><dd id="m-results">{{ t.result_count }}{% if t.result_count %} · <a href="{{ url_for('tasks.results', task_id=t._id) }}">open</a>{% endif %}</dd></div>
+  <div><dt>LLM tokens</dt><dd id="m-tokens">{{ t.token_usage.total }} in {{ t.token_usage.calls }} call(s)</dd></div>
+  <div><dt>Instruction version</dt><dd>v{{ t.website_snapshot.instructions_version }}</dd></div>
+</dl>
+
+<details class="wp-block" open><summary>Instructions</summary>
+  <h3 class="h6 mt-2">Task</h3><pre class="wp-pre">{{ t.instructions }}</pre>
+  <h3 class="h6">Website instructions (snapshot used for this run)</h3><pre class="wp-pre">{{ t.website_snapshot.instructions or '(none)' }}</pre>
+  <h3 class="h6">Parameters</h3><pre class="wp-pre">{{ t.params | tojson(indent=2) }}</pre>
+  <h3 class="h6">Allowed domains</h3><pre class="wp-pre">{{ t.website_snapshot.allowed_domains | join('\n') }}</pre>
+</details>
+
+<h2 class="h6 wp-h mt-4">Action history</h2>
+<div class="table-responsive"><table class="table wp-table table-sm align-middle">
+  <thead><tr><th>#</th><th>Action</th><th>Target</th><th>Outcome</th><th>Verification</th><th>Detail</th><th>Via</th></tr></thead>
+  <tbody id="actions-body">
+  {% for a in actions %}<tr>
+    <td>{{ a.seq }}</td><td class="wp-mono small">{{ a.action }}</td><td class="wp-mono small">{{ (a.target or a.params.get('url') or a.params.get('direction') or '') | truncate(50) }}</td>
+    <td><span class="wp-status wp-status-{{ {'success':'completed','failed':'failed','blocked':'failed','denied':'cancelled','aborted':'cancelled'}.get(a.outcome, 'running') }}">{{ a.outcome }}</span></td>
+    <td class="small">{% if a.verification and a.verification.ok is not none %}{{ '✓' if a.verification.ok else '✗' }} {{ a.verification.detail | truncate(60) }}{% else %}-{% endif %}</td>
+    <td class="small">{{ (a.detail or '') | truncate(110) }}</td><td class="small">{{ a.method or '' }}</td></tr>
+  {% else %}<tr class="wp-none"><td colspan="7" class="text-muted">No actions yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+
+{% if results %}
+<h2 class="h6 wp-h mt-4">Extracted results <a class="small ms-2" href="{{ url_for('tasks.export', fmt='csv', task_id=t._id) }}">CSV</a> <a class="small" href="{{ url_for('tasks.export', fmt='json', task_id=t._id) }}">JSON</a></h2>
+{% set cols = [] %}{% for r in results %}{% for k in r.data %}{% if k not in cols %}{% set _ = cols.append(k) %}{% endif %}{% endfor %}{% endfor %}
+<div class="table-responsive"><table class="table wp-table table-sm"><thead><tr>{% for c in cols[:8] %}<th>{{ c }}</th>{% endfor %}<th>Source</th></tr></thead>
+<tbody>{% for r in results %}<tr>{% for c in cols[:8] %}<td>{{ r.data.get(c, '') }}</td>{% endfor %}<td class="wp-mono small">{{ r.source_url | truncate(40) }}</td></tr>{% endfor %}</tbody></table></div>
+{% endif %}
+
+{% if ocr_logs %}
+<h2 class="h6 wp-h mt-4">OCR output</h2>
+{% for l in ocr_logs %}<details class="wp-block"><summary>{{ l.timestamp | dt }} · {{ l.message }}{% if l.details and l.details.file %} · <a href="{{ url_for('tasks.artifact', task_id=t._id, name=l.details.file) }}">full JSON</a>{% endif %}</summary>
+  <p class="wp-mono small mb-0">{{ (l.details.sample if l.details else []) | join(' | ') }}</p></details>{% endfor %}
+{% endif %}
+
+{% if artifacts %}
+<h2 class="h6 wp-h mt-4">Screenshots</h2>
+<div class="wp-shots">{% for f in artifacts if f.kind == 'image' %}<a href="{{ url_for('tasks.artifact', task_id=t._id, name=f.name) }}" target="_blank" rel="noopener"><img loading="lazy" src="{{ url_for('tasks.artifact', task_id=t._id, name=f.name) }}" alt="{{ f.name }}"><span>{{ f.name }}</span></a>{% endfor %}</div>
+{% endif %}
+
+<h2 class="h6 wp-h mt-4">Event log</h2>
+<div class="table-responsive"><table class="table wp-table table-sm"><thead><tr><th>Time</th><th>Level</th><th>Event</th><th>Message</th></tr></thead>
+<tbody>{% for l in logs %}<tr><td class="text-muted small">{{ l.timestamp | dt('%H:%M:%S') }}</td><td><span class="wp-sev wp-sev-{{ l.severity }}">{{ l.severity }}</span></td><td class="wp-mono small">{{ l.event }}</td>
+  <td class="small">{{ l.message }}{% if l.details and l.details.traceback %}<details><summary>Stack trace (admin only)</summary><pre class="wp-pre">{{ l.details.traceback }}</pre></details>{% endif %}</td></tr>{% endfor %}</tbody></table></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/task.js') }}"></script>{% endblock %}

@@ -1,0 +1,8 @@
+# Full production set: core + OCR.
+-r requirements-core.txt
+
+# OCR. UNVERIFIED ON YOUR HOST: build the image and run `python scripts/check_ocr.py` inside the worker.
+# PaddleOCR 2.x + paddlepaddle 2.6 needs numpy<2 and matching OpenCV builds.
+opencv-python==4.10.0.84
+paddlepaddle==2.6.2
+paddleocr==2.10.0

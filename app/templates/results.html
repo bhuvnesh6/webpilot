@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% from "_macros.html" import paginate, empty %}
+{% block title %}Results{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>Results</h1>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('tasks.export', fmt='csv', q=f.q, task_id=f.task_id) }}">Export CSV</a>
+    <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('tasks.export', fmt='json', q=f.q, task_id=f.task_id) }}">Export JSON</a></div></div>
+<form class="row g-2 mb-3" method="get">
+  <div class="col-md-6"><input class="form-control" type="search" name="q" value="{{ f.q }}" placeholder="Search all extracted values" aria-label="Search results"></div>
+  {% if f.task_id %}<input type="hidden" name="task_id" value="{{ f.task_id }}"><div class="col-auto align-self-center small">Filtered to one task. <a href="{{ url_for('tasks.results', q=f.q) }}">Clear</a></div>{% endif %}
+  <div class="col-auto"><button class="btn btn-outline-secondary">Search</button></div>
+</form>
+{% macro th(label, key) %}
+  {% set nd = 'asc' if (f.sort == key and f.dir == 'desc') else 'desc' %}
+  <th><a class="wp-sort" href="{{ url_for('tasks.results', q=f.q, task_id=f.task_id, sort=key, dir=nd) }}">{{ label }}{% if f.sort == key %} {{ '▲' if f.dir == 'asc' else '▼' }}{% endif %}</a></th>
+{% endmacro %}
+{% if docs %}
+<div class="table-responsive"><table class="table wp-table align-middle">
+  <thead><tr>{% for c in cols %}{{ th(c, 'data.' ~ c) }}{% endfor %}{{ th('Source URL', 'source_url') }}{{ th('Extracted', 'extracted_at') }}<th>Task</th></tr></thead>
+  <tbody>{% for d in docs %}<tr>
+    {% for c in cols %}<td>{{ d.data.get(c, '') }}</td>{% endfor %}
+    <td class="wp-mono small">{{ d.source_url | truncate(40) }}</td><td class="text-muted">{{ d.extracted_at | dt }}</td>
+    <td><a class="wp-mono small" href="{{ url_for('tasks.detail', task_id=d.task_id) }}">{{ d.task_id[:8] }}</a></td></tr>{% endfor %}</tbody></table></div>
+{{ paginate(pager, 'tasks.results') }}
+{% else %}{{ empty('No results', 'Extracted data appears here after a task saves it.') }}{% endif %}
+{% endblock %}

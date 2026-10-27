@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field_error %}
+{% block title %}{{ 'Edit website' if site else 'Add website' }}{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>{{ 'Edit ' ~ site.name if site else 'Add website' }}</h1></div>
+<form method="post" class="wp-form" novalidate>
+  {{ csrf() }}
+  <div class="row g-3">
+    <div class="col-md-5"><label class="form-label" for="name">Website name</label>
+      <input class="form-control {{ 'is-invalid' if errors.name }}" id="name" name="name" value="{{ form.get('name', '') }}" required>{{ field_error(errors, 'name') }}</div>
+    <div class="col-md-7"><label class="form-label" for="start_url">Website URL</label>
+      <input class="form-control wp-mono {{ 'is-invalid' if errors.start_url }}" id="start_url" name="start_url" value="{{ form.get('start_url', '') }}" placeholder="https://example.com" required>{{ field_error(errors, 'start_url') }}</div>
+    <div class="col-12"><label class="form-label" for="description">Description <span class="text-muted">(optional)</span></label>
+      <input class="form-control" id="description" name="description" value="{{ form.get('description', '') }}" maxlength="500"></div>
+    <div class="col-12"><label class="form-label" for="instructions">Website instructions</label>
+      <textarea class="form-control {{ 'is-invalid' if errors.instructions }}" id="instructions" name="instructions" rows="7" placeholder="Locate the product search field. Enter the keywords supplied with the task. Click Search. Extract product names, prices and URLs.">{{ form.get('instructions', '') }}</textarea>
+      {{ field_error(errors, 'instructions') }}<div class="form-text">Saved with the website and reused by every task. Each edit creates a new version; tasks keep a snapshot of the version they ran with.</div></div>
+    <div class="col-md-6"><label class="form-label" for="allowed_domains">Allowed domains</label>
+      <textarea class="form-control wp-mono {{ 'is-invalid' if errors.allowed_domains }}" id="allowed_domains" name="allowed_domains" rows="3" placeholder="shop.example.com">{{ form.get('allowed_domains', '') }}</textarea>
+      {{ field_error(errors, 'allowed_domains') }}<div class="form-text">One per line or comma-separated. Subdomains are included. The start URL’s own host is always allowed; nothing else is.</div></div>
+    <div class="col-md-6"><label class="form-label" for="default_params">Default task parameters</label>
+      <textarea class="form-control wp-mono {{ 'is-invalid' if errors.default_params }}" id="default_params" name="default_params" rows="3" placeholder="country: Canada">{{ form.get('default_params', '') }}</textarea>
+      {{ field_error(errors, 'default_params') }}<div class="form-text">JSON or <code>key: value</code> lines. Do not store passwords or tokens here.</div></div>
+    <div class="col-md-4"><label class="form-label" for="ocr_preference">OCR</label>
+      <select class="form-select" id="ocr_preference" name="ocr_preference">
+        {% for v, l in [('automatic','Automatic (fallback only)'),('enabled','Enabled (also on first page)'),('disabled','Disabled')] %}<option value="{{ v }}" {{ 'selected' if form.get('ocr_preference') == v }}>{{ l }}</option>{% endfor %}
+      </select></div>
+    <div class="col-md-4 d-flex align-items-end"><div class="form-check form-switch">
+      <input class="form-check-input" type="checkbox" role="switch" id="is_active" name="is_active" value="1" {{ 'checked' if form.get('is_active') }}>
+      <label class="form-check-label" for="is_active">Active</label></div></div>
+  </div>
+  <div class="mt-4 d-flex gap-2"><button class="btn btn-primary" type="submit">Save website</button><a class="btn btn-outline-secondary" href="{{ url_for('websites.index') }}">Cancel</a></div>
+</form>
+{% if revisions %}
+<h2 class="h6 wp-h mt-5">Instruction history</h2>
+<ul class="wp-feed">{% for r in revisions %}<li><span class="text-body">v{{ r.version }}: {{ r.instructions | truncate(120) or '(empty)' }}</span><span>{{ r.changed_at | dt }}</span></li>{% endfor %}</ul>
+{% endif %}
+{% endblock %}

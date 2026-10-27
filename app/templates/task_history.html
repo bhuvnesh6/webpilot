@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, paginate, empty %}
+{% block title %}Task history{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>Task history</h1></div>
+<form class="row g-2 mb-3" method="get">
+  <div class="col-md-4"><input class="form-control" name="q" value="{{ f.q }}" placeholder="Search by task name" aria-label="Search by task name"></div>
+  <div class="col-md-3"><select class="form-select" name="status" aria-label="Status"><option value="">Any status</option>{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if f.status == s }}>{{ s.replace('_',' ') }}</option>{% endfor %}</select></div>
+  <div class="col-md-3"><select class="form-select" name="website_id" aria-label="Website"><option value="">Any website</option>{% for w in websites %}<option value="{{ w._id }}" {{ 'selected' if f.website_id == (w._id | string) }}>{{ w.name }}</option>{% endfor %}</select></div>
+  <div class="col-md-2"><button class="btn btn-outline-secondary w-100">Filter</button></div>
+</form>
+{% if tasks %}
+<div class="table-responsive"><table class="table wp-table align-middle">
+  <thead><tr><th>Task</th><th>Website</th><th>Status</th><th>Results</th><th>Actions</th><th>Duration</th><th>Created</th></tr></thead>
+  <tbody>{% for t in tasks %}
+  <tr><td><span class="wp-mono small">{{ t._id[:8] }}</span> <a href="{{ url_for('tasks.detail', task_id=t._id) }}">{{ t.name }}</a>{% if t.retry_of %} <span class="text-muted small">(retry)</span>{% endif %}</td>
+    <td>{{ t.website_name }}</td><td>{{ badge(t.status) }}</td><td>{{ t.result_count or 0 }}</td><td>{{ t.actions_executed or 0 }}</td>
+    <td>{{ t.duration_seconds | duration if t.duration_seconds is defined else '-' }}</td><td class="text-muted">{{ t.created_at | dt }}</td></tr>
+  {% endfor %}</tbody></table></div>
+{{ paginate(pager, 'tasks.history') }}
+{% else %}{{ empty('No tasks match', 'Change the filters or start a new task.') }}{% endif %}
+{% endblock %}

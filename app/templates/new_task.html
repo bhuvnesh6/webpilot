@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, field_error %}
+{% block title %}New task{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>New task</h1>
+  {% if templates %}<div class="dropdown"><button class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" type="button">Load template</button>
+    <ul class="dropdown-menu dropdown-menu-end">{% for t in templates %}<li><a class="dropdown-item" href="{{ url_for('tasks.new_task', template_id=t._id) }}">{{ t.name }}</a></li>{% endfor %}</ul></div>{% endif %}
+</div>
+{% if not websites %}
+  <div class="wp-empty"><strong>Add a website first</strong><span>Tasks run against a saved website.</span><a class="btn btn-primary btn-sm mt-3" href="{{ url_for('websites.new') }}">Add website</a></div>
+{% else %}
+<form method="post" class="wp-form" novalidate>
+  {{ csrf() }}
+  {% if errors.form %}<div class="alert alert-danger py-2" role="alert">{{ errors.form }}</div>{% endif %}
+  <div class="row g-3">
+    <div class="col-md-5"><label class="form-label" for="website_id">Website</label>
+      <select class="form-select {{ 'is-invalid' if errors.website_id }}" id="website_id" name="website_id" required>
+        <option value="">Choose a website</option>
+        {% for w in websites %}<option value="{{ w._id }}" {{ 'selected' if form.get('website_id') == (w._id | string) }} {{ 'disabled' if not w.is_active }}>{{ w.name }}{{ '' if w.is_active else ' (disabled)' }}</option>{% endfor %}
+      </select>{{ field_error(errors, 'website_id') }}</div>
+    <div class="col-md-7"><label class="form-label" for="name">Task name</label>
+      <input class="form-control {{ 'is-invalid' if errors.name }}" id="name" name="name" value="{{ form.get('name', '') }}" maxlength="120" required>{{ field_error(errors, 'name') }}</div>
+    <div class="col-12"><label class="form-label" for="instructions">Task instructions</label>
+      <textarea class="form-control" id="instructions" name="instructions" rows="6" placeholder="Search for laptops in Canada under Electronics. Extract the product name, displayed price and product URL from the first 20 results." required>{{ form.get('instructions', '') }}</textarea>
+      <div class="form-text">Adds to the website’s saved instructions. It cannot override security rules, domain limits or the approval prompts for consequential actions.</div></div>
+    <div class="col-12"><label class="form-label" for="params">Task input values <span class="text-muted">(optional)</span></label>
+      <textarea class="form-control wp-mono {{ 'is-invalid' if errors.params }}" id="params" name="params" rows="3" placeholder="keywords: laptops&#10;country: Canada">{{ form.get('params', '') }}</textarea>{{ field_error(errors, 'params') }}</div>
+    <div class="col-md-3"><label class="form-label" for="max_actions">Maximum actions</label>
+      <input class="form-control" id="max_actions" name="max_actions" type="number" min="1" max="{{ s.max_actions_per_task }}" value="{{ form.get('max_actions') }}"></div>
+    <div class="col-md-3"><label class="form-label" for="max_duration">Maximum duration (seconds)</label>
+      <input class="form-control" id="max_duration" name="max_duration" type="number" min="30" max="{{ s.max_task_duration_seconds }}" value="{{ form.get('max_duration') }}"></div>
+  </div>
+  <div class="mt-4 d-flex gap-2">
+    <button class="btn btn-primary" type="submit" name="intent" value="start">Start task</button>
+    <button class="btn btn-outline-secondary" type="submit" name="intent" value="template">Save as template</button>
+    <a class="btn btn-link" href="{{ url_for('dashboard.overview') }}">Cancel</a>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

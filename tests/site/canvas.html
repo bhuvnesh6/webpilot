@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Canvas app</title>
+<style>body{margin:0} canvas{display:block}</style></head>
+<body>
+<canvas id="c" width="800" height="400"></canvas>
+<div id="out"></div>
+<script>
+  const c = document.getElementById('c'), g = c.getContext('2d');
+  g.fillStyle = '#eee'; g.fillRect(0, 0, 800, 400);
+  g.fillStyle = '#2a5'; g.fillRect(200, 100, 120, 40);   // the "Launch" button lives at x 200-320, y 100-140
+  g.fillStyle = '#fff'; g.font = '20px sans-serif'; g.fillText('Launch', 225, 127);
+  c.addEventListener('click', (e) => {
+    const r = c.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (x >= 200 && x <= 320 && y >= 100 && y <= 140) document.getElementById('out').textContent = 'Launched!';
+  });
+</script></body></html>

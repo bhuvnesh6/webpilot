@@ -1,0 +1,4 @@
+# Test/dev set (no OCR packages; OCR tests use a stub backend).
+-r requirements-core.txt
+pytest==9.1.1
+mongomock==4.3.0

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, empty %}
+{% block title %}Overview{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>Overview</h1><a class="btn btn-primary" href="{{ url_for('tasks.new_task') }}">New task</a></div>
+
+<section class="wp-stats" aria-label="Summary">
+  <div><span class="n">{{ website_count }}</span><span class="l">Saved websites</span></div>
+  <div><span class="n">{{ counts.total }}</span><span class="l">Total tasks</span></div>
+  <div><span class="n">{{ counts.running }}</span><span class="l">Running now</span></div>
+  <div><span class="n">{{ counts.queued }}</span><span class="l">Waiting in queue</span></div>
+  <div><span class="n">{{ counts.completed }}</span><span class="l">Completed</span></div>
+  <div><span class="n">{{ counts.failed }}</span><span class="l">Failed</span></div>
+</section>
+<p class="text-muted small mt-2">Average task duration: {{ avg_duration | duration if avg_duration else 'not enough completed tasks yet' }}.</p>
+
+<div class="row g-4 mt-1">
+  <div class="col-xl-7">
+    <h2 class="h6 wp-h">Recent tasks</h2>
+    {% if recent %}
+    <div class="table-responsive"><table class="table wp-table align-middle">
+      <thead><tr><th>Task</th><th>Website</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody>{% for t in recent %}
+        <tr><td><a href="{{ url_for('tasks.detail', task_id=t._id) }}">{{ t.name }}</a></td><td>{{ t.website_name }}</td><td>{{ badge(t.status) }}</td><td class="text-muted">{{ t.created_at | dt }}</td></tr>
+      {% endfor %}</tbody></table></div>
+    {% else %}{{ empty('No tasks yet', 'Add a website, then start a task from New Task.') }}{% endif %}
+  </div>
+  <div class="col-xl-5">
+    <h2 class="h6 wp-h">Latest errors</h2>
+    {% if errors %}<ul class="wp-feed">{% for e in errors %}
+      <li><a href="{{ url_for('tasks.detail', task_id=e.task_id) }}">{{ e.message | truncate(110) }}</a><span>{{ e.timestamp | dt }}</span></li>
+    {% endfor %}</ul>{% else %}<p class="text-muted small">No errors recorded.</p>{% endif %}
+    <h2 class="h6 wp-h mt-4">Recent agent activity</h2>
+    {% if activity %}<ul class="wp-feed">{% for e in activity %}
+      <li><a href="{{ url_for('tasks.detail', task_id=e.task_id) }}">{{ e.message | truncate(110) }}</a><span>{{ e.timestamp | dt }}</span></li>
+    {% endfor %}</ul>{% else %}<p class="text-muted small">Nothing yet.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}

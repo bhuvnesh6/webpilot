@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, csrf, empty %}
+{% block title %}Running tasks{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>Running tasks</h1><span class="text-muted small">Updates every few seconds</span></div>
+<div id="running-wrap" data-poll-url="{{ url_for('tasks.api_running') }}" data-detail-base="{{ url_for('tasks.new_task').replace('/new', '/') }}" data-cancel-base="{{ url_for('tasks.new_task').replace('/new', '/') }}">
+{% if tasks %}
+<div class="table-responsive"><table class="table wp-table align-middle">
+  <thead><tr><th>Task</th><th>Website</th><th>Status</th><th>Current action</th><th>Progress</th><th>Started</th><th>Elapsed</th><th class="text-end">Actions</th></tr></thead>
+  <tbody id="running-body">{% for t in tasks %}
+    <tr><td><span class="wp-mono small">{{ t._id[:8] }}</span> <a href="{{ url_for('tasks.detail', task_id=t._id) }}">{{ t.name }}</a></td><td>{{ t.website_name }}</td><td>{{ badge(t.status) }}</td>
+      <td class="wp-mono small">{{ t.current_action or '-' }}</td><td>{{ (t.progress_message or '') | truncate(70) }}</td>
+      <td class="text-muted">{{ t.started_at | dt if t.started_at else 'queued' }}</td><td>{{ t.started_at | elapsed }}</td>
+      <td class="text-end wp-actions"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('tasks.detail', task_id=t._id) }}">Details</a>
+        <form class="d-inline" method="post" action="{{ url_for('tasks.cancel', task_id=t._id) }}" data-confirm="Request a stop for this task?">{{ csrf() }}<button class="btn btn-sm btn-outline-danger" {{ 'disabled' if t.status == 'cancel_requested' }}>Request stop</button></form></td></tr>
+  {% endfor %}</tbody></table></div>
+{% else %}{{ empty('Nothing is running', 'Queued and active tasks appear here.') }}{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='js/running.js') }}"></script>{% endblock %}

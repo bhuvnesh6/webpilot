@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_macros.html" import csrf, empty %}
+{% block title %}Websites{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>Websites</h1><a class="btn btn-primary" href="{{ url_for('websites.new') }}">Add website</a></div>
+{% if websites %}
+<div class="table-responsive"><table class="table wp-table align-middle">
+  <thead><tr><th>Name</th><th>Start URL</th><th>Allowed domains</th><th>OCR</th><th>Status</th><th>Tasks</th><th class="text-end">Actions</th></tr></thead>
+  <tbody>{% for w in websites %}
+  <tr>
+    <td><strong>{{ w.name }}</strong>{% if w.description %}<div class="text-muted small">{{ w.description | truncate(70) }}</div>{% endif %}<div class="text-muted small">instructions v{{ w.instructions_version }}</div></td>
+    <td class="wp-mono">{{ w.start_url | truncate(48) }}</td>
+    <td class="wp-mono small">{{ (w.allowed_domains or ['(start host only)']) | join(', ') | truncate(50) }}</td>
+    <td>{{ w.ocr_preference }}</td>
+    <td>{% if w.is_active %}<span class="wp-status wp-status-completed">active</span>{% else %}<span class="wp-status wp-status-cancelled">disabled</span>{% endif %}</td>
+    <td><a href="{{ url_for('tasks.history', website_id=w._id) }}">{{ w.task_count }}</a></td>
+    <td class="text-end wp-actions">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('websites.edit', wid=w._id) }}">Edit</a>
+      <a class="btn btn-sm btn-outline-secondary {{ '' if w.is_active else 'disabled' }}" href="{{ url_for('tasks.new_task', website_id=w._id) }}">New task</a>
+      <div class="dropdown d-inline-block">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" type="button">More</button>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><form method="post" action="{{ url_for('websites.test_connection', wid=w._id) }}">{{ csrf() }}<button class="dropdown-item">Test connectivity</button></form></li>
+          <li><form method="post" action="{{ url_for('websites.run_test', wid=w._id) }}">{{ csrf() }}<button class="dropdown-item" {{ '' if w.is_active else 'disabled' }}>Run test task</button></form></li>
+          <li><form method="post" action="{{ url_for('websites.toggle', wid=w._id) }}">{{ csrf() }}<button class="dropdown-item">{{ 'Disable' if w.is_active else 'Enable' }}</button></form></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><form method="post" action="{{ url_for('websites.delete', wid=w._id) }}" data-confirm="Delete “{{ w.name }}”? Its task history is kept.">{{ csrf() }}<button class="dropdown-item text-danger">Delete</button></form></li>
+        </ul>
+      </div>
+    </td>
+  </tr>{% endfor %}</tbody></table></div>
+{% else %}{{ empty('No websites yet', 'Save a website with instructions so the agent can reuse it in future tasks.') }}{% endif %}
+{% endblock %}

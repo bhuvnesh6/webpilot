@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex, nofollow">
+  <title>Sign in · WebPilot AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap.min.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+</head>
+<body class="wp-login">
+  <main class="wp-login-card">
+    <h1>WebPilot AI</h1>
+    <p class="text-muted">Sign in to manage websites and tasks.</p>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for cat, msg in messages %}<div class="alert alert-{{ cat }} py-2">{{ msg }}</div>{% endfor %}{% endwith %}
+    {% if error %}<div class="alert alert-danger py-2" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label class="form-label" for="username">Username</label>
+      <input class="form-control mb-3" id="username" name="username" autocomplete="username" required autofocus>
+      <label class="form-label" for="password">Password</label>
+      <input class="form-control mb-4" id="password" name="password" type="password" autocomplete="current-password" required>
+      <button class="btn btn-primary w-100" type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>

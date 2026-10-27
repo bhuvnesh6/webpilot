@@ -1,0 +1,91 @@
+# WebPilot AI: web + worker + MongoDB. Redis is NOT defined here: the existing Redis container is reused.
+# Before the first `docker compose up`, inspect your VPS (`docker network ls`, `docker ps`) and set
+# PROXY_NETWORK / REDIS_NETWORK / REDIS_HOST in .env to the real names.
+name: webpilot
+
+x-app: &app
+  image: webpilot-ai:latest
+  build:
+    context: .
+    dockerfile: Dockerfile
+  env_file: .env
+  restart: unless-stopped
+  init: true
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+  depends_on:
+    mongo:
+      condition: service_healthy
+
+services:
+  web:
+    <<: *app
+    container_name: webpilot-web
+    security_opt: ["no-new-privileges:true"]
+    expose: ["8050"]                    # never published to the host; Nginx Proxy Manager reaches it over the proxy network
+    volumes:
+      - artifacts:/app/artifacts:ro     # the dashboard only reads screenshots
+    networks: [internal, proxy, redis]  # NOTE: if NPM and Redis share ONE docker network, delete the `redis` entries (here, worker, and the networks block)
+    mem_limit: 768m
+
+  worker:
+    <<: *app
+    container_name: webpilot-worker
+    command: ["sh", "-c", "exec celery -A celery_app.celery worker -n webpilot@%h -Q ${CELERY_QUEUE:-webpilot} -c ${MAX_CONCURRENT_BROWSER_TASKS:-1} --prefetch-multiplier=1 -l ${LOG_LEVEL:-INFO}"]
+    # Microsoft's Playwright seccomp profile lets Chromium keep its sandbox on without --no-sandbox.
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./docker/seccomp_chromium.json
+    shm_size: "1gb"                     # Chromium needs a large /dev/shm
+    volumes:
+      - artifacts:/app/artifacts
+    networks: [internal, redis]
+    mem_limit: ${WORKER_MEM_LIMIT:-3g}  # Chromium + PaddleOCR are hungry; tune after measuring (docker stats)
+    cpus: ${WORKER_CPUS:-2}
+    pids_limit: 1024
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py", "worker"]
+      interval: 60s
+      timeout: 20s
+      start_period: 90s
+      retries: 3
+
+  mongo:
+    image: mongo:7.0
+    container_name: webpilot-mongo
+    restart: unless-stopped
+    command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.5"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?set MONGO_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in .env}
+    volumes:
+      - mongo_data:/data/db
+    networks: [internal]                # not reachable from the proxy or Redis networks, and never published
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u \"$$MONGO_INITDB_ROOT_USERNAME\" -p \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ping:1}).ok' | grep -q 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 6
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  internal:
+    name: webpilot_internal
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK:?set PROXY_NETWORK in .env (the Docker network Nginx Proxy Manager is on)}
+  redis:
+    external: true
+    name: ${REDIS_NETWORK:?set REDIS_NETWORK in .env (the Docker network your Redis container is on)}
+
+volumes:
+  mongo_data:
+    name: webpilot_mongo_data
+  artifacts:
+    name: webpilot_artifacts

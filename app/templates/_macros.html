@@ -1,0 +1,22 @@
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endmacro %}
+
+{% macro badge(status) %}
+<span class="wp-status wp-status-{{ status }}" data-status-badge>{{ status.replace('_', ' ') }}</span>
+{% endmacro %}
+
+{% macro field_error(errors, name) %}{% if errors and errors.get(name) %}<div class="invalid-feedback d-block">{{ errors[name] }}</div>{% endif %}{% endmacro %}
+
+{% macro paginate(p, endpoint) %}
+{% if p.pages > 1 %}
+<nav aria-label="Pagination" class="wp-pager">
+  {% set args = request.args.to_dict() %}
+  {% if p.has_prev %}{% set _ = args.update({'page': p.page - 1}) %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for(endpoint, **args) }}">Previous</a>{% endif %}
+  <span class="text-muted small px-2">Page {{ p.page }} of {{ p.pages }} ({{ p.total }} total)</span>
+  {% if p.has_next %}{% set _ = args.update({'page': p.page + 1}) %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for(endpoint, **args) }}">Next</a>{% endif %}
+</nav>
+{% elif p.total %}<div class="text-muted small mt-2">{{ p.total }} total</div>{% endif %}
+{% endmacro %}
+
+{% macro empty(title, hint) %}
+<div class="wp-empty"><strong>{{ title }}</strong><span>{{ hint }}</span></div>
+{% endmacro %}

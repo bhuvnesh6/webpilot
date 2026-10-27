@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="wp-page-head"><h1>Settings</h1></div>
+<p class="text-muted">Configuration comes from environment variables. Edit <code>.env</code> and recreate the containers to change it. Secrets are never shown here.</p>
+<div class="row g-4">
+  <div class="col-lg-7"><h2 class="h6 wp-h">Effective configuration</h2>
+    <table class="table wp-table"><tbody>
+      <tr><th>Admin username</th><td>{{ admin_username }}</td></tr>
+      {% for k, v in summary.items() %}<tr><th>{{ k }}</th><td>{{ v }}</td></tr>{% endfor %}</tbody></table></div>
+  <div class="col-lg-5"><h2 class="h6 wp-h">Service checks</h2>
+    <table class="table wp-table"><tbody>
+      <tr><th>MongoDB</th><td><span class="wp-status wp-status-{{ 'completed' if checks.mongo == 'ok' else 'failed' }}">{{ checks.mongo }}</span></td></tr>
+      <tr><th>Redis</th><td><span class="wp-status wp-status-{{ 'completed' if checks.redis == 'ok' else 'failed' }}">{{ checks.redis }}</span></td></tr>
+      <tr><th>OCR package (web image)</th><td>{{ 'installed' if ocr.available else 'not importable' }}</td></tr></tbody></table>
+    <p class="text-muted small">Worker health, OCR model loading and Chromium are checked in the worker container; see the README’s health-check section.</p></div>
+</div>
+{% endblock %}
