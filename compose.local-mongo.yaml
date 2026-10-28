@@ -1,0 +1,40 @@
+# OPTIONAL: run MongoDB locally instead of Atlas.
+#   1. In .env leave MONGO_URI empty and set MONGO_ROOT_USERNAME / MONGO_ROOT_PASSWORD.
+#   2. docker compose -f compose.yaml -f compose.local-mongo.yaml up -d
+# Note: the root credentials are applied only the FIRST time the data volume is created; changing them in .env later
+# does not change an existing database (the container will then report "unhealthy").
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: webpilot-mongo
+    restart: unless-stopped
+    command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.5"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?set MONGO_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in .env}
+    volumes:
+      - mongo_data:/data/db
+    networks: [internal]
+    mem_limit: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --quiet -u \"$$MONGO_INITDB_ROOT_USERNAME\" -p \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ping:1}).ok' | grep -q 1"]
+      interval: 15s
+      timeout: 10s
+      start_period: 30s
+      retries: 6
+  web:
+    networks: [internal, redis]
+    depends_on:
+      mongo: { condition: service_healthy }
+  worker:
+    networks: [internal, redis]
+    depends_on:
+      mongo: { condition: service_healthy }
+
+networks:
+  internal:
+    name: webpilot_internal
+
+volumes:
+  mongo_data:
+    name: webpilot_mongo_data

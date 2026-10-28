@@ -1,4 +1,5 @@
-# WebPilot AI: web + worker + MongoDB. Redis is NOT defined here: the existing Redis container is reused.
+# WebPilot AI: web + worker. MongoDB lives in the cloud (MongoDB Atlas, set MONGO_URI in .env) and Redis is your existing
+# container (not defined here). For a local MongoDB container instead, see compose.local-mongo.yaml.
 # Before the first `docker compose up`, inspect your VPS (`docker network ls`, `docker ps`) and set
 # REDIS_NETWORK / REDIS_HOST in .env to the real names.
 name: webpilot
@@ -15,9 +16,6 @@ x-app: &app
   logging:
     driver: json-file
     options: { max-size: "10m", max-file: "5" }
-  depends_on:
-    mongo:
-      condition: service_healthy
 
 services:
   web:
@@ -25,11 +23,12 @@ services:
     container_name: webpilot-web
     security_opt: ["no-new-privileges:true"]
     ports:
-      # Dashboard: http://<server-ip>:8051. Use BIND_ADDRESS=127.0.0.1 in .env to expose it only to the server itself (SSH tunnel).
-      - "${BIND_ADDRESS:-0.0.0.0}:8051:8000"
+      # Dashboard: http://<server-ip>:${APP_PORT} (default 8051; same number on the host and in the container).
+      # Use BIND_ADDRESS=127.0.0.1 in .env to expose it only to the server itself (SSH tunnel).
+      - "${BIND_ADDRESS:-0.0.0.0}:${APP_PORT:-8051}:${APP_PORT:-8051}"
     volumes:
       - artifacts:/app/artifacts:ro     # the dashboard only reads screenshots
-    networks: [internal, redis]
+    networks: [redis]
     mem_limit: 768m
 
   worker:
@@ -43,7 +42,7 @@ services:
     shm_size: "1gb"                     # Chromium needs a large /dev/shm
     volumes:
       - artifacts:/app/artifacts
-    networks: [internal, redis]
+    networks: [redis]
     mem_limit: ${WORKER_MEM_LIMIT:-3g}  # Chromium + PaddleOCR are hungry; tune after measuring (docker stats)
     cpus: ${WORKER_CPUS:-2}
     pids_limit: 1024
@@ -54,37 +53,11 @@ services:
       start_period: 90s
       retries: 3
 
-  mongo:
-    image: mongo:7.0
-    container_name: webpilot-mongo
-    restart: unless-stopped
-    command: ["mongod", "--auth", "--bind_ip_all", "--wiredTigerCacheSizeGB", "0.5"]
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?set MONGO_ROOT_USERNAME in .env}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?set MONGO_ROOT_PASSWORD in .env}
-    volumes:
-      - mongo_data:/data/db
-    networks: [internal]                # not reachable from the proxy or Redis networks, and never published
-    mem_limit: 1g
-    healthcheck:
-      test: ["CMD-SHELL", "mongosh --quiet -u \"$$MONGO_INITDB_ROOT_USERNAME\" -p \"$$MONGO_INITDB_ROOT_PASSWORD\" --authenticationDatabase admin --eval 'db.adminCommand({ping:1}).ok' | grep -q 1"]
-      interval: 15s
-      timeout: 10s
-      start_period: 30s
-      retries: 6
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
-
 networks:
-  internal:
-    name: webpilot_internal
   redis:
     external: true
     name: ${REDIS_NETWORK:?set REDIS_NETWORK in .env (the Docker network your Redis container is on)}
 
 volumes:
-  mongo_data:
-    name: webpilot_mongo_data
   artifacts:
     name: webpilot_artifacts

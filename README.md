@@ -6,7 +6,7 @@ A private, single-admin dashboard where you save websites + natural-language ins
 - **Eyes**: Playwright DOM/accessibility inspection first, PaddleOCR (local) as the fallback.
 - **Hands**: Playwright/Chromium executes validated actions inside an isolated, policy-enforced browser context.
 
-Stack: Flask · MongoDB · Celery + your **existing Redis** · Playwright/Chromium · PaddleOCR · Docker Compose. Served directly at `http://<server-ip>:8051`.
+Stack: Flask · MongoDB Atlas (cloud) · Celery + your **existing Redis** · Playwright/Chromium · PaddleOCR · Docker Compose. Served directly at `http://<server-ip>:8051`.
 
 ---
 
@@ -33,7 +33,7 @@ Stack: Flask · MongoDB · Celery + your **existing Redis** · Playwright/Chromi
 
 Read this first. It is the honest state of the project.
 
-**Verified by automated tests (182 tests, real Chromium, real Redis, real Celery worker):**
+**Verified by automated tests (191 tests: real Chromium, real Redis, real Celery worker; MongoDB is an in-memory stand-in):**
 
 - Login, CSRF, rate limiting, session invalidation on password rotation, startup refusal on missing or placeholder secrets.
 - SSRF policy: loopback, private, link-local, metadata endpoints, internal service names, numeric-encoded IPs, IPv4-mapped IPv6, bad schemes, credentials in URLs, DNS answers that resolve privately.
@@ -55,6 +55,7 @@ Read this first. It is the honest state of the project.
 | LLM quality: how well the model follows instructions and resists prompt injection | Not testable offline. The design contains the damage (fixed action set, domain policy, approval gate) but cannot guarantee good behaviour | Try your real tasks with small action budgets first |
 | Chromium sandbox inside the container on your host kernel | Depends on host kernel and AppArmor settings | Worker logs on first task; see 10 |
 | Port 8051 reachable from your browser, Hostinger firewall specifics | Environment-specific | Section 4 |
+| **Connecting to MongoDB Atlas** (SRV DNS lookup, TLS, IP allowlist, your user's permissions) | Tests use an in-memory Mongo stand-in. Only URI validation, TLS option handling and "Mongo unreachable at startup" are tested | Section 3.1a, then `curl -s http://127.0.0.1:8051/healthz` must show `"mongo":"ok"` |
 | Egress firewall recipe (section 11) | Needs root on your host | Test it deliberately |
 
 ---
@@ -86,10 +87,24 @@ nano .env
 Generate secrets:
 
 ```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # SECRET_KEY, MONGO_ROOT_PASSWORD
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # SECRET_KEY
 ```
 
 The app **refuses to start** if `SECRET_KEY` is short or a placeholder, `ADMIN_PASSWORD` is missing, weak, or under 12 characters in production, or the Groq key is a placeholder. No default admin account is ever created.
+
+### 3.1a MongoDB Atlas (cloud database)
+
+1. In Atlas create a cluster (the free **M0** tier is enough to start).
+2. **Database Access → Add New Database User** with *Read and write to any database* (or restrict it to the `webpilot` database). Note the username and password.
+3. **Network Access → Add IP Address → your VPS's public IP.** This is the step people miss: Atlas rejects every connection from an address that is not on this list, and the app will log `ServerSelectionTimeoutError`. Find the IP with `curl -4 ifconfig.me` **on the VPS**. Avoid `0.0.0.0/0`, which exposes your database to the whole internet (the only thing left protecting it would be the password).
+4. **Database → Connect → Drivers** and copy the connection string.
+5. Put it in `.env` as `MONGO_URI`, replacing `<db_username>` and `<db_password>` including the angle brackets. If the password contains special characters (`@ : / ? # %` …), URL-encode it:
+   ```bash
+   python3 -c "import urllib.parse as u; print(u.quote_plus('your-password'))"
+   ```
+   The app refuses to start while `MONGO_URI` still contains a `<placeholder>`.
+
+Data is encrypted in transit (TLS; the app pins a CA bundle so this does not depend on the server's certificate store). Collections and indexes are created automatically on first start.
 
 ### 3.2 Discover the existing Redis network
 
@@ -143,7 +158,7 @@ docker compose logs --tail=200 web
 docker compose logs --tail=200 worker
 ```
 
-MongoDB initialises with your `MONGO_ROOT_*` credentials **only on first start**. Changing them later in `.env` does not change the existing database; see section 10.
+On first start look for a line like `Could not reach MongoDB (...)` in `docker compose logs web`: it means the Atlas IP allowlist, user or password needs fixing (section 10). The web container keeps running and `/healthz` reports `mongo: unavailable` until the database is reachable.
 
 ### 3.5.1 Smoke tests inside the worker
 
@@ -162,7 +177,7 @@ After `docker compose up -d`, open:
 http://<your-server-ip>:8051
 ```
 
-Port 8051 on the host maps to the app's port 8000 in the container (`compose.yaml`, `web.ports`). MongoDB is never published; Redis is whatever you already run.
+The app listens on `APP_PORT` (default **8051**) and Compose publishes that same port number on the host (`compose.yaml`, `web.ports`). To use another port, change only `APP_PORT` in `.env` and recreate the web container. The database is in Atlas and Redis is whatever you already run; neither is published by this project.
 
 **Required `.env` settings for this mode** (already in `.env.example`):
 
@@ -259,25 +274,24 @@ The data model only gains fields, so rolling code back is safe. Take a backup be
 
 ## 7. Backup and restore
 
-```bash
-# MongoDB -> compressed archive (credentials come from the container's own env; nothing in shell history)
-docker compose exec -T mongo sh -c \
-  'mongodump -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --db "${MONGO_DATABASE:-webpilot}" --archive --gzip' \
-  > webpilot-$(date +%F).archive.gz
+The data lives in Atlas, so backups happen there:
 
-# Screenshots / OCR JSON
-docker run --rm -v webpilot_artifacts:/a -v "$PWD":/b alpine tar czf /b/artifacts-$(date +%F).tgz -C /a .
-```
+- **Paid tiers (M10+):** enable Cloud Backup in Atlas (continuous or scheduled snapshots, point-in-time restore).
+- **Free M0 and Flex tiers have no automated backups.** Take your own dumps from any machine that has the [MongoDB Database Tools](https://www.mongodb.com/docs/database-tools/installation/installation/) installed and whose IP is on the Atlas Network Access list:
+  ```bash
+  read -rs -p "Atlas URI: " URI && echo        # paste the full MONGO_URI; it is not echoed or stored in history
+  mongodump --uri="$URI" --db webpilot --archive=webpilot-$(date +%F).archive.gz --gzip
+  ```
+  Restore (this **replaces** the collections in that database):
+  ```bash
+  mongorestore --uri="$URI" --archive=webpilot-YYYY-MM-DD.archive.gz --gzip --drop
+  ```
+- Screenshots and OCR JSON live in the `webpilot_artifacts` Docker volume on the VPS:
+  ```bash
+  docker run --rm -v webpilot_artifacts:/a -v "$PWD":/b alpine tar czf /b/artifacts-$(date +%F).tgz -C /a .
+  ```
 
-Restore (this **replaces** existing collections in that database):
-
-```bash
-docker compose exec -T mongo sh -c \
-  'mongorestore -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --archive --gzip --drop' \
-  < webpilot-YYYY-MM-DD.archive.gz
-```
-
-Test a restore on a scratch host before you rely on it. Backups contain extracted data and screenshots: store them as carefully as the data itself.
+Test a restore into a scratch database (`--nsFrom 'webpilot.*' --nsTo 'webpilot_restore_test.*'`) before relying on it. Backups contain extracted data and screenshots: store them as carefully as the data itself.
 
 ---
 
@@ -324,10 +338,13 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 | Browser will not start | Missing libs, sandbox failure, low memory | Worker logs: `Chromium failed to start...` |
 | *"Chromium sandbox could not start"* | Host blocks unprivileged user namespaces (common on Ubuntu 24.04: `sysctl kernel.apparmor_restrict_unprivileged_userns`) | Prefer fixing the host. Last resort: `BROWSER_SANDBOX=false`, which weakens isolation (see 11) |
 | OCR fails to initialise | Dependency conflict, models not downloaded, memory | `scripts/check_ocr.py`; rebuild looking for the pre-download warning; OCR failure degrades to DOM-only |
-| MongoDB authentication fails | Credentials changed after first init | `MONGO_INITDB_*` apply only on first start. Either restore the old password or reset the volume (this deletes data: back up first) |
+| Log says `Could not reach MongoDB ... ServerSelectionTimeoutError` | **VPS public IP not in Atlas Network Access** (most common), cluster paused (M0 pauses after inactivity), DNS blocked | Atlas → Network Access: add `curl -4 ifconfig.me` from the VPS. Resume the cluster in Atlas |
+| Log says `Authentication failed` | Wrong database user/password, special characters not URL-encoded, user lacks access to the database | Re-copy the URI; URL-encode the password; check the user's privileges in Atlas → Database Access |
+| `Invalid ... MONGO_URI still contains a placeholder` | `<db_password>` was left in the string | Replace the whole `<...>` part, brackets included |
+| `/healthz` says `mongo: unavailable` but the app runs | Same causes as above, or a temporary Atlas outage | `curl -s http://127.0.0.1:8051/healthz`; `docker compose logs --tail=50 web` |
 | Website cannot be reached | DNS/TLS/blocked by policy | Websites → Test connectivity; task log `policy_blocked` shows the exact rule |
 | `domain_not_allowed` | Page links or redirects to another domain | Add that domain to the website's allowed domains if you trust it |
-| `port is already allocated` on `up` | Something else uses host port 8051 | `sudo ss -ltnp | grep 8051`; stop it or change the left side of `8051:8000` in `compose.yaml` |
+| `port is already allocated` on `up` | Something else uses host port 8051 | `sudo ss -ltnp | grep 8051`; stop it or set a different `APP_PORT` in `.env` |
 | Container restarts repeatedly | Startup exception, bad env | `docker compose logs --tail=200 <service>` |
 | Task stays `running` forever | Worker died | Reaper marks it `failed (worker_lost)` after `STALE_TASK_SECONDS`; check OOM (section 9) |
 | Task waits in `waiting_for_admin` | Awaiting you | Open the task page and respond |
@@ -338,7 +355,7 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 
 **Enforced in code**
 
-- Admin only; every route and API is behind login; CSRF on all state-changing requests; login rate limiting (Redis-backed with in-memory fallback); `HttpOnly` and `SameSite=Lax` cookies (`Secure` when `SECURE_COOKIES=true`); strict CSP (no inline scripts, no third-party hosts: Bootstrap and fonts are vendored); security headers; non-root containers; `no-new-privileges`; all capabilities dropped; MongoDB is on a private network only and never published.
+- Admin only; every route and API is behind login; CSRF on all state-changing requests; login rate limiting (Redis-backed with in-memory fallback); `HttpOnly` and `SameSite=Lax` cookies (`Secure` when `SECURE_COOKIES=true`); strict CSP (no inline scripts, no third-party hosts: Bootstrap and fonts are vendored); security headers; non-root containers; `no-new-privileges`; all capabilities dropped; MongoDB lives in Atlas (TLS in transit; access limited by Atlas's IP allowlist and database-user credentials).
 - The LLM emits **one JSON action** from a closed set. Anything else is rejected and re-requested a bounded number of times. There is no code execution path. Keys are allowlisted (no shortcuts like Ctrl+…).
 - Page text, OCR text and extracted data are labelled **untrusted** in every prompt; the fixed rules instruct the model to ignore instructions found there. This reduces but cannot eliminate prompt-injection risk, which is why the hard controls below exist.
 - **Hard controls the model cannot talk its way past:** every document request (including redirects and iframes) must be on the website's allowlist; every request is checked for private/loopback/link-local/metadata destinations; each response's *actual* server IP is re-checked to detect DNS rebinding (the task is aborted if a non-public address was reached); downloads, permissions and service workers are disabled; one fresh cookie-less context per task; consequential actions need your approval.
@@ -348,12 +365,11 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 **Residual risks: be aware**
 
 1. **DNS rebinding is detected, not prevented.** Chromium does its own DNS lookup after our check. We catch it when the response arrives and abort, but the first request may already have reached the internal host. **Close this at the network layer.**
-2. **Chromium shares a container with the worker**, which can reach MongoDB and Redis at the TCP level. URL policy stops the browser from being *pointed* there, but a browser exploit would not respect it. Mitigations: keep the sandbox on, keep Chromium patched (rebuild regularly), and add host egress rules. A starting recipe (verify it on your host; replace addresses with real ones from `docker inspect`):
+2. **Chromium shares a container with the worker**, which can reach Redis (and the internet, including Atlas) at the TCP level. URL policy stops the browser from being *pointed* there, but a browser exploit would not respect it. Mitigations: keep the sandbox on, keep Chromium patched (rebuild regularly), and add host egress rules. A starting recipe (verify it on your host; replace addresses with real ones from `docker inspect`):
    ```bash
-   # Worker may talk to Mongo + Redis + the public internet, but not to other private ranges.
+   # Worker may talk to Redis + the public internet (Atlas is public), but not to other private ranges.
    W=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' webpilot-worker)   # one IP per network
    for ip in $W; do
-     sudo iptables -I DOCKER-USER -s $ip -d <MONGO_IP> -j ACCEPT
      sudo iptables -I DOCKER-USER -s $ip -d <REDIS_IP> -j ACCEPT
      sudo iptables -I DOCKER-USER -s $ip -d 10.0.0.0/8 -j DROP
      sudo iptables -I DOCKER-USER -s $ip -d 172.16.0.0/12 -j DROP
@@ -367,7 +383,8 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 5. `BROWSER_SANDBOX=false` removes Chromium's sandbox. Do not use it on untrusted sites.
 6. Single admin, no audit trail beyond task logs, no secure credential vault.
 6a. **Plain-HTTP access (section 4):** the admin password and session cookie are unencrypted on the wire. Restrict port 8051 to your IP or use the SSH tunnel.
-7. Groq receives page text, OCR text and your instructions. Do not automate pages containing data you cannot send to a third-party LLM.
+7. Groq receives page text, OCR text and your instructions, and **Atlas stores everything the agent extracts plus task logs**. Do not automate pages containing data you cannot send to those third parties.
+8. **Atlas exposure:** keep the Network Access list limited to your VPS IP (plus your own IP if you use Compass). A database user's password is the only other barrier, so make it long and unique. M0 clusters are shared infrastructure.
 
 Seccomp profile `docker/seccomp_chromium.json` is Microsoft's Playwright profile (Apache-2.0), used so Chromium's sandbox works without `--no-sandbox`.
 
@@ -382,10 +399,9 @@ All settings are environment variables, validated at start-up (every problem is 
 | `APP_ENV` | `production` / `development` / `testing` | `production` |
 | `SECRET_KEY` | Flask session signing (≥32 chars) | required |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Admin login (password ≥12 chars in production) | required |
-| `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD` | Mongo init user | required unless `MONGO_URI` |
-| `MONGO_DATABASE` | Database name | `webpilot` |
-| `MONGO_URI` | Optional full URI (overrides the above for the app) | built from parts |
-| `MONGO_HOST` | Host for the built URI | `webpilot-mongo` |
+| `MONGO_URI` | **Atlas connection string** (`mongodb+srv://...`); `<placeholders>` are rejected | required |
+| `MONGO_DATABASE` | Database name inside the cluster | `webpilot` |
+| `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD`, `MONGO_HOST` | Only for the optional local MongoDB (`compose.local-mongo.yaml`) when `MONGO_URI` is empty | unset |
 | `REDIS_HOST`, `REDIS_PORT`, `REDIS_DB`, `REDIS_PASSWORD` | Existing Redis | host required; `6379`, `4` |
 | `CELERY_QUEUE` | Dedicated queue | `webpilot` |
 | `GROQ_API_KEY`, `GROQ_MODEL` | Groq credential and model | model `openai/gpt-oss-120b` |
@@ -393,7 +409,7 @@ All settings are environment variables, validated at start-up (every problem is 
 | `GROQ_RESPONSE_FORMAT` | `json_object` / `json_schema` / `none` | `json_object` |
 | `GROQ_REASONING_EFFORT` | `low`/`medium`/`high` for gpt-oss, empty otherwise | empty |
 | `GROQ_MAX_COMPLETION_TOKENS` | Includes reasoning tokens | `2048` |
-| `APP_PORT` | Internal web port | `8000` |
+| `APP_PORT` | Dashboard port, inside the container and on the host | `8051` |
 | `MAX_ACTIONS_PER_TASK` | Upper bound for any task | `100` |
 | `MAX_TASK_DURATION_SECONDS` | Upper bound; approval wait time is excluded | `900` |
 | `MAX_RECOVERY_ATTEMPTS` | Consecutive failed attempts before the task fails | `3` |
@@ -439,12 +455,12 @@ Adding a vision model later means giving `Observer` another source of observatio
 
 Passing local unit tests does not satisfy acceptance. On the VPS:
 
-- [ ] `docker compose ps` shows `web`, `worker`, `mongo` healthy.
+- [ ] `docker compose ps` shows `web` and `worker` healthy, and `curl -s http://127.0.0.1:8051/healthz` reports `"mongo":"ok"`.
 - [ ] `docker compose ps` / `docker ps` shows **no** Redis container created by this project; section 3.4 proved the existing Redis is used (`dbsize` rises while a task runs).
 - [ ] Recreate containers (`docker compose up -d --force-recreate`): websites, tasks and results are still there.
 - [ ] `http://<server-ip>:8051` shows the login page from your own computer, and is **not** reachable from an IP you didn't allow (test from a phone on mobile data).
 - [ ] Login works and survives a page refresh (proves `SECURE_COOKIES=false` is applied).
-- [ ] **Websites → Run test task** completes (proves Groq + Chromium + Redis + Mongo).
+- [ ] **Websites → Run test task** completes (proves Groq + Chromium + Redis + Atlas).
 - [ ] `docker compose run --rm worker python scripts/check_ocr.py` prints `text found: True`.
 - [ ] A real task from **New Task** completes and results appear under **Results**.
 - [ ] Trigger an approval (a page with a "Buy"/"Delete" button on a *harmless* test site) and confirm it pauses.

@@ -9,7 +9,8 @@ pydantic==2.14.1
 requests==2.33.1
 
 # Persistence and queue (celery[redis] pulls kombu; redis is pinned to the range kombu and limits both support)
-pymongo==4.19.0
+pymongo==4.19.0       # includes dnspython, needed for mongodb+srv:// (Atlas) URIs
+certifi==2026.2.25    # CA bundle used for TLS to Atlas
 celery[redis]==5.6.3
 redis==5.2.1
 

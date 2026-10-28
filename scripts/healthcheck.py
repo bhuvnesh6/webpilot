@@ -6,7 +6,7 @@ import urllib.request
 
 
 def web() -> bool:
-    port = os.environ.get("APP_PORT", "8000")
+    port = os.environ.get("APP_PORT", "8051")
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as r:
             return r.status == 200       # 200 = MongoDB reachable ("degraded" when only Redis is down still counts)

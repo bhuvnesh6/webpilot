@@ -23,6 +23,21 @@ _db_override = None
 _lock = threading.Lock()
 
 
+def mongo_client_kwargs(uri: str) -> dict:
+    """MongoClient options. Cloud (Atlas) connections are TLS; pin certifi's CA bundle so they work regardless of the OS store."""
+    kw: dict = dict(serverSelectionTimeoutMS=10000, connectTimeoutMS=10000, tz_aware=True, appname="webpilot")
+    low = uri.lower()
+    tls_off = "tls=false" in low or "ssl=false" in low
+    uses_tls = low.startswith("mongodb+srv://") or "tls=true" in low or "ssl=true" in low
+    if uses_tls and not tls_off and "tlscafile" not in low:
+        try:
+            import certifi
+            kw["tlsCAFile"] = certifi.where()
+        except ImportError:
+            pass
+    return kw
+
+
 def configure(settings: Settings, db=None) -> None:
     """Install settings (and optionally a pre-built DB handle, used by tests)."""
     global _settings, _db_override, _client, _client_pid
@@ -46,7 +61,7 @@ def get_db():
     s = get_settings()
     with _lock:
         if _client is None or _client_pid != os.getpid():
-            _client = MongoClient(s.mongo_uri, serverSelectionTimeoutMS=5000, tz_aware=True, appname="webpilot")
+            _client = MongoClient(s.mongo_uri, **mongo_client_kwargs(s.mongo_uri))
             _client_pid = os.getpid()
         return _client[s.mongo_database]
 

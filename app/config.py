@@ -62,6 +62,16 @@ class Settings:
         return self.app_env == "production"
 
     @property
+    def mongo_target(self) -> str:
+        """Host part of the Mongo URI only (never credentials), for display and logs."""
+        try:
+            netloc = self.mongo_uri.split("://", 1)[1].split("/", 1)[0].split("?", 1)[0]
+            hosts = netloc.rsplit("@", 1)[-1]
+            return f"{hosts} / {self.mongo_database}"
+        except Exception:
+            return "(unparseable)"
+
+    @property
     def redis_url(self) -> str:
         auth = f":{quote_plus(self.redis_password)}@" if self.redis_password else ""
         return f"redis://{auth}{self.redis_host}:{self.redis_port}/{self.redis_db}"
@@ -78,6 +88,7 @@ class Settings:
             "Groq model": self.groq_model,
             "Groq requests / minute": self.groq_requests_per_minute,
             "Groq response format": self.groq_response_format,
+            "MongoDB": self.mongo_target,
             "Redis": f"{self.redis_host}:{self.redis_port} (db {self.redis_db})",
             "Celery queue": self.celery_queue,
             "Max actions / task": self.max_actions_per_task,
@@ -169,12 +180,19 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
 
     mongo_database = env.get("MONGO_DATABASE", "webpilot").strip() or "webpilot"
     mongo_uri = env.get("MONGO_URI", "").strip()
-    if not mongo_uri:
+    if mongo_uri:
+        if not mongo_uri.lower().startswith(("mongodb://", "mongodb+srv://")):
+            errors.append("MONGO_URI must start with mongodb:// or mongodb+srv:// (copy it from Atlas: Connect > Drivers).")
+        elif "<" in mongo_uri or ">" in mongo_uri or "replace_with" in mongo_uri.lower():
+            errors.append("MONGO_URI still contains a placeholder such as <db_password>. Replace the whole <...> part with the "
+                          "real, URL-encoded database-user password.")
+    else:
         user, pw = env.get("MONGO_ROOT_USERNAME", ""), env.get("MONGO_ROOT_PASSWORD", "")
         host = env.get("MONGO_HOST", "webpilot-mongo").strip()
         port = env.get("MONGO_PORT", "27017").strip()
         if not user or not pw:
-            errors.append("Set MONGO_URI, or both MONGO_ROOT_USERNAME and MONGO_ROOT_PASSWORD.")
+            errors.append("MONGO_URI is required (your MongoDB Atlas connection string). For the optional local-MongoDB "
+                          "setup, leave it empty and set MONGO_ROOT_USERNAME and MONGO_ROOT_PASSWORD instead.")
         elif _looks_placeholder(pw):
             errors.append("MONGO_ROOT_PASSWORD is still a placeholder value.")
         else:
@@ -225,7 +243,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         groq_response_format=response_format,
         groq_reasoning_effort=effort,
         groq_max_completion_tokens=_int(env, "GROQ_MAX_COMPLETION_TOKENS", 2048, errors, 128, 32768),
-        app_port=_int(env, "APP_PORT", 8000, errors, 1, 65535),
+        app_port=_int(env, "APP_PORT", 8051, errors, 1, 65535),
         max_actions_per_task=_int(env, "MAX_ACTIONS_PER_TASK", 100, errors, 1, 1000),
         max_task_duration_seconds=_int(env, "MAX_TASK_DURATION_SECONDS", 900, errors, 30, 86400),
         max_recovery_attempts=_int(env, "MAX_RECOVERY_ATTEMPTS", 3, errors, 0, 20),

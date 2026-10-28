@@ -119,6 +119,8 @@ def create_app(settings: Settings | None = None, db=None) -> Flask:
                     "cookie travel unencrypted. Restrict port access (firewall / SSH tunnel) or put HTTPS in front of it.")
     try:
         extensions.ensure_indexes()
-    except Exception as exc:  # DB may still be starting; /healthz will report it
-        log.error("Could not create indexes at startup: %s", exc)
+    except Exception as exc:  # DB may be unreachable right now; /healthz keeps reporting it
+        log.error("Could not reach MongoDB (%s) at startup: %s: %s. For Atlas check: this server's public IP is in the "
+                  "Network Access list, the database user and URL-encoded password are right, and the cluster is not paused.",
+                  settings.mongo_target, exc.__class__.__name__, str(exc)[:300])
     return app

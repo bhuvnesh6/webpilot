@@ -164,3 +164,68 @@ def test_spoofed_forwarded_for_cannot_dodge_login_rate_limit_without_a_proxy(tmp
     codes = [c.post("/login", data={"username": "admin", "password": "bad", "csrf_token": tok},
                     headers={"X-Forwarded-For": f"198.51.100.{i}"}).status_code for i in range(5)]
     assert codes == [401, 401, 401, 429, 429]
+
+
+# -------- MongoDB Atlas configuration
+ATLAS = "mongodb+srv://appuser:S3cr3t%40pw@cluster0.ab1cd.mongodb.net/?retryWrites=true&w=majority&appName=webpilot"
+
+
+@pytest.mark.parametrize("uri,needle", [
+    ("mongodb+srv://<db_username>:<db_password>@cluster0.ab1cd.mongodb.net/?retryWrites=true", "placeholder"),
+    ("mongodb+srv://u:<db_password>@c.mongodb.net", "placeholder"),
+    ("postgres://u:p@host/db", "must start with"),
+    ("cluster0.ab1cd.mongodb.net", "must start with"),
+])
+def test_bad_mongo_uri_is_rejected_with_a_clear_message(tmp_path, uri, needle):
+    with pytest.raises(ConfigError) as ei:
+        load_settings(make_env(tmp_path, MONGO_URI=uri))
+    assert needle in str(ei.value)
+
+
+def test_atlas_uri_accepted_and_target_never_leaks_credentials(tmp_path):
+    s = load_settings(make_env(tmp_path, MONGO_URI=ATLAS))
+    assert s.mongo_uri == ATLAS
+    assert s.mongo_target == "cluster0.ab1cd.mongodb.net / webpilot_test"
+    assert "S3cr3t" not in str(s.public_summary()) and "appuser" not in str(s.public_summary())
+    assert ATLAS in s.secrets        # so the whole URI is scrubbed from logs
+
+
+def test_missing_mongo_config_explains_atlas_first(tmp_path):
+    env = make_env(tmp_path)
+    del env["MONGO_URI"]
+    with pytest.raises(ConfigError) as ei:
+        load_settings(env)
+    assert "MONGO_URI is required" in str(ei.value) and "Atlas" in str(ei.value)
+
+
+def test_mongo_client_kwargs_pin_ca_bundle_for_tls_only():
+    from app.extensions import mongo_client_kwargs
+    import certifi
+    assert mongo_client_kwargs(ATLAS)["tlsCAFile"] == certifi.where()
+    assert mongo_client_kwargs("mongodb://h:27017/?tls=true")["tlsCAFile"] == certifi.where()
+    assert "tlsCAFile" not in mongo_client_kwargs("mongodb://u:p@webpilot-mongo:27017/?authSource=admin")   # local, no TLS
+    assert "tlsCAFile" not in mongo_client_kwargs(ATLAS + "&tls=false")
+    assert "tlsCAFile" not in mongo_client_kwargs(ATLAS + "&tlsCAFile=/my/ca.pem")
+    assert mongo_client_kwargs(ATLAS)["serverSelectionTimeoutMS"] == 10000
+
+
+def test_pymongo_accepts_the_client_options_without_connecting():
+    """Constructing the client is lazy: proves the option names are valid for the pinned pymongo."""
+    from pymongo import MongoClient
+    from app.extensions import mongo_client_kwargs
+    uri = "mongodb://u:p@127.0.0.1:1/?tls=true"
+    c = MongoClient(uri, **mongo_client_kwargs(uri))
+    c.close()
+
+
+def test_startup_survives_unreachable_mongo_and_logs_actionable_hint(tmp_path, caplog):
+    s = load_settings(make_env(tmp_path, MONGO_URI="mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=300&connectTimeoutMS=300"))
+    from app import extensions
+    extensions.configure(s, db=None)
+    import logging
+    with caplog.at_level(logging.ERROR):
+        app = create_app(s)                     # must not crash: Mongo may simply be unreachable for a moment
+    assert any("Network Access" in r.getMessage() for r in caplog.records)
+    r = app.test_client().get("/healthz")
+    assert r.status_code == 503 and r.get_json()["mongo"] == "unavailable"
+    extensions.configure(s, db=None)

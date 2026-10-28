@@ -39,7 +39,7 @@ USER webpilot
 RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=False, lang='en', show_log=False)" \
     || echo "WARNING: OCR model pre-download failed. Run 'docker compose run --rm worker python scripts/check_ocr.py' to diagnose."
 
-EXPOSE 8000
+EXPOSE 8051
 HEALTHCHECK --interval=30s --timeout=8s --start-period=40s --retries=3 CMD ["python", "scripts/healthcheck.py", "web"]
 
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${APP_PORT:-8000} --workers 2 --threads 4 --timeout 60 --access-logfile - wsgi:app"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${APP_PORT:-8051} --workers 2 --threads 4 --timeout 60 --access-logfile - wsgi:app"]
