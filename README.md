@@ -6,7 +6,7 @@ A private, single-admin dashboard where you save websites + natural-language ins
 - **Eyes**: Playwright DOM/accessibility inspection first, PaddleOCR (local) as the fallback.
 - **Hands**: Playwright/Chromium executes validated actions inside an isolated, policy-enforced browser context.
 
-Stack: Flask · MongoDB · Celery + your **existing Redis** · Playwright/Chromium · PaddleOCR · Docker Compose · Nginx Proxy Manager.
+Stack: Flask · MongoDB · Celery + your **existing Redis** · Playwright/Chromium · PaddleOCR · Docker Compose. Served directly at `http://<server-ip>:8051`.
 
 ---
 
@@ -15,7 +15,7 @@ Stack: Flask · MongoDB · Celery + your **existing Redis** · Playwright/Chromi
 1. [What has and has not been verified](#1-what-has-and-has-not-been-verified)
 2. [System requirements](#2-system-requirements)
 3. [First deployment](#3-first-deployment)
-4. [Nginx Proxy Manager and HTTPS](#4-nginx-proxy-manager-and-https)
+4. [Accessing the dashboard (IP:8051), firewall and HTTPS](#4-accessing-the-dashboard-ip8051-firewall-and-https)
 5. [Using it](#5-using-it)
 6. [Operations: logs, restarts, updates, rollback](#6-operations)
 7. [Backup and restore](#7-backup-and-restore)
@@ -33,7 +33,7 @@ Stack: Flask · MongoDB · Celery + your **existing Redis** · Playwright/Chromi
 
 Read this first. It is the honest state of the project.
 
-**Verified by automated tests (177 tests, real Chromium, real Redis, real Celery worker):**
+**Verified by automated tests (182 tests, real Chromium, real Redis, real Celery worker):**
 
 - Login, CSRF, rate limiting, session invalidation on password rotation, startup refusal on missing or placeholder secrets.
 - SSRF policy: loopback, private, link-local, metadata endpoints, internal service names, numeric-encoded IPs, IPv4-mapped IPv6, bad schemes, credentials in URLs, DNS answers that resolve privately.
@@ -54,7 +54,7 @@ Read this first. It is the honest state of the project.
 | Live Groq calls with `openai/gpt-oss-120b`, JSON mode, real rate limits | Needs your API key | Run the "Run test task" button on a website |
 | LLM quality: how well the model follows instructions and resists prompt injection | Not testable offline. The design contains the damage (fixed action set, domain policy, approval gate) but cannot guarantee good behaviour | Try your real tasks with small action budgets first |
 | Chromium sandbox inside the container on your host kernel | Depends on host kernel and AppArmor settings | Worker logs on first task; see 10 |
-| NPM routing, HTTPS, Hostinger specifics | Environment-specific | Section 4 |
+| Port 8051 reachable from your browser, Hostinger firewall specifics | Environment-specific | Section 4 |
 | Egress firewall recipe (section 11) | Needs root on your host | Test it deliberately |
 
 ---
@@ -64,8 +64,9 @@ Read this first. It is the honest state of the project.
 - Hostinger VPS (or any Linux host) with **Docker Engine 24+** and **Docker Compose v2.20+** (`docker compose version`).
 - **RAM: 4 GB minimum, 8 GB comfortable.** Chromium plus PaddleOCR is the big consumer; the worker is capped at 3 GB by default (`WORKER_MEM_LIMIT`). Add swap if you have less.
 - ~6 GB free disk for images and models; more for screenshots (auto-pruned after `ARTIFACT_RETENTION_DAYS`).
-- An existing **Redis** container and an existing **Nginx Proxy Manager (NPM)** container.
-- A Groq API key and a DNS name for the dashboard (for example `pilot.example.com`).
+- An existing **Redis** container.
+- A Groq API key.
+- TCP port **8051** open to you (VPS firewall / Hostinger panel firewall).
 
 ---
 
@@ -90,28 +91,21 @@ python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # SECRET_KEY, MO
 
 The app **refuses to start** if `SECRET_KEY` is short or a placeholder, `ADMIN_PASSWORD` is missing, weak, or under 12 characters in production, or the Groq key is a placeholder. No default admin account is ever created.
 
-### 3.2 Discover the existing Redis and NPM networks
+### 3.2 Discover the existing Redis network
 
 ```bash
 docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Ports}}"
 docker network ls
-```
-
-Find your Redis container and NPM container, then see which networks each is on:
-
-```bash
 docker inspect <redis_container> --format '{{json .NetworkSettings.Networks}}' | python3 -m json.tool
-docker inspect <npm_container>   --format '{{json .NetworkSettings.Networks}}' | python3 -m json.tool
 ```
 
 Set in `.env`:
 
 - `REDIS_HOST`: the Redis container's name or network alias **on the network you choose**.
-- `REDIS_NETWORK`: the Docker network Redis is on.
-- `PROXY_NETWORK`: the Docker network NPM is on.
+- `REDIS_NETWORK`: the Docker network Redis is on (WebPilot's web and worker containers join it).
 - `REDIS_PASSWORD`: if your Redis requires one.
 
-**If NPM and Redis share one network**, use that name for both variables **and** delete the `redis` network entries in `compose.yaml` (the comment on `web`'s `networks:` line shows where). Attaching one container to the same network under two names can fail.
+The dashboard needs no other external network: it is published directly on host port **8051**.
 
 ### 3.3 Pick a free Redis database
 
@@ -160,24 +154,41 @@ docker compose exec worker python scripts/healthcheck.py worker && echo worker O
 
 ---
 
-## 4. Nginx Proxy Manager and HTTPS
+## 4. Accessing the dashboard (IP:8051), firewall and HTTPS
 
-In NPM: **Hosts → Proxy Hosts → Add Proxy Host**.
+After `docker compose up -d`, open:
 
-| Field | Value |
-|---|---|
-| Domain Names | your WebPilot subdomain |
-| Scheme | `http` |
-| Forward Hostname / IP | `webpilot-web` |
-| Forward Port | `8000` |
-| Block Common Exploits | on |
-| Websockets Support | optional (the dashboard polls; it does not need WebSockets) |
+```
+http://<your-server-ip>:8051
+```
 
-**SSL tab:** request a Let's Encrypt certificate, enable **Force SSL** and **HTTP/2**. Production session cookies are `Secure`, so **login only works over HTTPS**; opening `http://<ip>:8000` directly will not hold a session (and port 8000 is deliberately not published).
+Port 8051 on the host maps to the app's port 8000 in the container (`compose.yaml`, `web.ports`). MongoDB is never published; Redis is whatever you already run.
 
-If `webpilot-web` does not resolve from NPM, the two are on different networks. Check `PROXY_NETWORK` and that `docker inspect webpilot-web` lists that network. Never publish MongoDB (27017) or Redis ports to the internet.
+**Required `.env` settings for this mode** (already in `.env.example`):
 
-`TRUSTED_PROXIES=1` makes the login rate limiter see the real client IP from NPM's `X-Forwarded-For`. If you put another proxy (e.g. Cloudflare) in front, raise it accordingly.
+```dotenv
+SECURE_COOKIES=false     # without this the browser silently drops the session cookie over plain http and login "does nothing"
+TRUSTED_PROXIES=0        # there is no proxy; trusting X-Forwarded-For would let anyone dodge the login rate limit
+BIND_ADDRESS=0.0.0.0     # or 127.0.0.1 to expose the port only to the server itself (see the SSH tunnel below)
+```
+
+### ⚠ Plain HTTP means the password is not encrypted
+
+Anyone on the network path between you and the server (public Wi-Fi, an ISP, a compromised router) can read your admin password and session cookie. The app warns about this in the web log at startup. Pick at least one of:
+
+1. **Restrict who can reach port 8051.** In the Hostinger firewall, allow TCP 8051 only from your own IP. **Do not rely on `ufw` alone:** Docker publishes ports through its own iptables chains, which bypass `ufw` rules. Use the provider firewall, or `DOCKER-USER` rules, for example:
+   ```bash
+   sudo iptables -I DOCKER-USER -p tcp --dport 8051 ! -s <YOUR_IP> -j DROP   # evaluated before Docker's own forwarding
+   ```
+   (`DOCKER-USER` sees the container port after NAT; if this does not block as expected, match with `-m conntrack --ctorigdstport 8051` instead. Test from another network.)
+2. **SSH tunnel (no public exposure at all).** Set `BIND_ADDRESS=127.0.0.1`, recreate (`docker compose up -d --force-recreate web`), then on your computer:
+   ```bash
+   ssh -L 8051:127.0.0.1:8051 <user>@<server-ip>
+   ```
+   and browse `http://127.0.0.1:8051`. The traffic is encrypted by SSH.
+3. **Add HTTPS later** (a reverse proxy or a tunnel product of your choice), then set `SECURE_COOKIES=true`, and `TRUSTED_PROXIES=<hops>` if the proxy sets `X-Forwarded-For`.
+
+The login rate limit (5/min, 30/hour per client IP by default) slows password guessing but is no substitute for restricting access. Use a long unique `ADMIN_PASSWORD`.
 
 ---
 
@@ -303,9 +314,9 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 | Problem | Likely causes | Initial checks |
 |---|---|---|
 | Container exits immediately with `Invalid WebPilot AI configuration` | Placeholder or missing secret in `.env` | `docker compose logs web`: every problem is listed |
-| Dashboard unavailable | Container stopped, NPM can't reach it, wrong forward host/port | `docker compose ps`, `docker compose logs web`, NPM target `webpilot-web:8000` |
-| Login page loads, login "does nothing" | Using plain HTTP (Secure cookie) | Use the HTTPS NPM hostname |
-| `docker compose config` fails on `PROXY_NETWORK` / `REDIS_NETWORK` | Variables unset | Set them in `.env` (section 3.2) |
+| Dashboard unavailable at `http://IP:8051` | Container stopped, port 8051 blocked by the VPS/provider firewall, `BIND_ADDRESS=127.0.0.1` | `docker compose ps`; `curl -I http://127.0.0.1:8051/login` on the server (works = firewall/bind issue); `docker compose logs web` |
+| Login page loads, login "does nothing" / bounces back to login | `SECURE_COOKIES=true` while using plain `http://` | Set `SECURE_COOKIES=false` in `.env`, then `docker compose up -d --force-recreate web` |
+| `docker compose config` fails on `REDIS_NETWORK` | Variable unset | Set it in `.env` (section 3.2) |
 | Worker not processing jobs; tasks stay `queued` | Redis unreachable, wrong `REDIS_HOST`/`REDIS_DB`/password, queue name mismatch | Section 3.4; `docker compose logs worker`; same `CELERY_QUEUE` on both services |
 | Task fails instantly: *"Redis is unavailable"* | Same as above, seen by the web container | Settings page shows Redis status |
 | Groq requests failing | Bad key, quota, rate limit, model not available to your account | Task event log: `llm_auth`, `llm_rate_limited`, `llm_throttled`; try another `GROQ_MODEL` |
@@ -316,7 +327,7 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 | MongoDB authentication fails | Credentials changed after first init | `MONGO_INITDB_*` apply only on first start. Either restore the old password or reset the volume (this deletes data: back up first) |
 | Website cannot be reached | DNS/TLS/blocked by policy | Websites → Test connectivity; task log `policy_blocked` shows the exact rule |
 | `domain_not_allowed` | Page links or redirects to another domain | Add that domain to the website's allowed domains if you trust it |
-| NPM cannot reach the app | Different Docker networks, wrong port | `docker network inspect $PROXY_NETWORK` lists `webpilot-web` |
+| `port is already allocated` on `up` | Something else uses host port 8051 | `sudo ss -ltnp | grep 8051`; stop it or change the left side of `8051:8000` in `compose.yaml` |
 | Container restarts repeatedly | Startup exception, bad env | `docker compose logs --tail=200 <service>` |
 | Task stays `running` forever | Worker died | Reaper marks it `failed (worker_lost)` after `STALE_TASK_SECONDS`; check OOM (section 9) |
 | Task waits in `waiting_for_admin` | Awaiting you | Open the task page and respond |
@@ -327,7 +338,7 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 
 **Enforced in code**
 
-- Admin only; every route and API is behind login; CSRF on all state-changing requests; login rate limiting (Redis-backed with in-memory fallback); `HttpOnly`, `Secure`, `SameSite=Lax` cookies; strict CSP (no inline scripts, no third-party hosts: Bootstrap and fonts are vendored); security headers; non-root containers; `no-new-privileges`; all capabilities dropped; MongoDB not reachable from the proxy or Redis networks.
+- Admin only; every route and API is behind login; CSRF on all state-changing requests; login rate limiting (Redis-backed with in-memory fallback); `HttpOnly` and `SameSite=Lax` cookies (`Secure` when `SECURE_COOKIES=true`); strict CSP (no inline scripts, no third-party hosts: Bootstrap and fonts are vendored); security headers; non-root containers; `no-new-privileges`; all capabilities dropped; MongoDB is on a private network only and never published.
 - The LLM emits **one JSON action** from a closed set. Anything else is rejected and re-requested a bounded number of times. There is no code execution path. Keys are allowlisted (no shortcuts like Ctrl+…).
 - Page text, OCR text and extracted data are labelled **untrusted** in every prompt; the fixed rules instruct the model to ignore instructions found there. This reduces but cannot eliminate prompt-injection risk, which is why the hard controls below exist.
 - **Hard controls the model cannot talk its way past:** every document request (including redirects and iframes) must be on the website's allowlist; every request is checked for private/loopback/link-local/metadata destinations; each response's *actual* server IP is re-checked to detect DNS rebinding (the task is aborted if a non-public address was reached); downloads, permissions and service workers are disabled; one fresh cookie-less context per task; consequential actions need your approval.
@@ -355,6 +366,7 @@ docker inspect webpilot-worker --format '{{.State.OOMKilled}} {{.RestartCount}}'
 4. **Approval gating is heuristic** (text patterns, sensitive-form detection). It will miss unusual wording. Do not point this at sites where one mistaken click is costly or irreversible.
 5. `BROWSER_SANDBOX=false` removes Chromium's sandbox. Do not use it on untrusted sites.
 6. Single admin, no audit trail beyond task logs, no secure credential vault.
+6a. **Plain-HTTP access (section 4):** the admin password and session cookie are unencrypted on the wire. Restrict port 8051 to your IP or use the SSH tunnel.
 7. Groq receives page text, OCR text and your instructions. Do not automate pages containing data you cannot send to a third-party LLM.
 
 Seccomp profile `docker/seccomp_chromium.json` is Microsoft's Playwright profile (Apache-2.0), used so Chromium's sandbox works without `--no-sandbox`.
@@ -396,10 +408,12 @@ All settings are environment variables, validated at start-up (every problem is 
 | `ADMIN_WAIT_TIMEOUT_SECONDS` | How long to wait for your approval | `600` |
 | `STALE_TASK_SECONDS` | Heartbeat age before a task is declared lost | `300` |
 | `LOGIN_RATE_LIMIT` | Flask-Limiter syntax | `5 per minute;30 per hour` |
-| `TRUSTED_PROXIES` | Proxy hops to trust for client IP | `1` |
+| `SECURE_COOKIES` | `true` = HTTPS-only cookies + HSTS. **Must be `false` for plain `http://IP:8051`** | `true` in production (`.env.example` sets `false`) |
+| `TRUSTED_PROXIES` | Reverse-proxy hops to trust for client IP (`0` = direct access) | `0` |
+| `BIND_ADDRESS` | Host interface for port 8051 (Compose variable) | `0.0.0.0` |
 | `LOG_LEVEL` | `DEBUG`/`INFO`/`WARNING`/`ERROR` | `INFO` |
 | `ALLOW_PRIVATE_NETWORKS` | Dev/tests only; **startup fails if set in production** | `false` |
-| `PROXY_NETWORK`, `REDIS_NETWORK` | Existing Docker networks | required by Compose |
+| `REDIS_NETWORK` | Existing Docker network of your Redis | required by Compose |
 | `WORKER_MEM_LIMIT`, `WORKER_CPUS` | Worker container caps | `3g`, `2` |
 
 **OCR modes** (per website): *automatic*: OCR runs only when needed (target not found in the DOM, an action failed, or the page is nearly empty); *enabled*: also on the first page and when the model requests it; *disabled*: never. OCR runs locally; screenshots are never sent to Groq. Without a vision model, OCR gives text and positions only; it cannot tell what a control *is*.
@@ -428,7 +442,8 @@ Passing local unit tests does not satisfy acceptance. On the VPS:
 - [ ] `docker compose ps` shows `web`, `worker`, `mongo` healthy.
 - [ ] `docker compose ps` / `docker ps` shows **no** Redis container created by this project; section 3.4 proved the existing Redis is used (`dbsize` rises while a task runs).
 - [ ] Recreate containers (`docker compose up -d --force-recreate`): websites, tasks and results are still there.
-- [ ] NPM serves the dashboard over HTTPS; login works; `http://` redirects to `https://`.
+- [ ] `http://<server-ip>:8051` shows the login page from your own computer, and is **not** reachable from an IP you didn't allow (test from a phone on mobile data).
+- [ ] Login works and survives a page refresh (proves `SECURE_COOKIES=false` is applied).
 - [ ] **Websites → Run test task** completes (proves Groq + Chromium + Redis + Mongo).
 - [ ] `docker compose run --rm worker python scripts/check_ocr.py` prints `text found: True`.
 - [ ] A real task from **New Task** completes and results appear under **Results**.

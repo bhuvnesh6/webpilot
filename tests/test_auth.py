@@ -115,3 +115,52 @@ def test_mongo_uri_built_from_parts_and_quoted(tmp_path):
     del env["MONGO_URI"]
     s = load_settings(env)
     assert "p%40ss%2Fword%3A1x" in s.mongo_uri and s.mongo_uri.endswith("authSource=admin")
+
+
+# -------- direct IP:port access (no reverse proxy, no HTTPS)
+def _prod(tmp_path, **over):
+    return load_settings(make_env(tmp_path, APP_ENV="production", ALLOW_PRIVATE_NETWORKS="false", **over))
+
+
+def _login_cookie_and_headers(app):
+    c = app.test_client()
+    tok = csrf_token(c)
+    r = c.post("/login", data={"username": "admin", "password": "correct-horse-battery-staple", "csrf_token": tok})
+    return r.headers.get("Set-Cookie", ""), r
+
+
+def test_plain_http_mode_sets_non_secure_cookie_and_no_hsts(tmp_path, db):
+    app = create_app(_prod(tmp_path, SECURE_COOKIES="false"), db=db)
+    cookie, r = _login_cookie_and_headers(app)
+    assert r.status_code == 302 and "Secure" not in cookie and "HttpOnly" in cookie and "SameSite=Lax" in cookie
+    assert "Strict-Transport-Security" not in app.test_client().get("/login").headers
+
+
+def test_https_mode_still_sets_secure_cookie_and_hsts(tmp_path, db):
+    app = create_app(_prod(tmp_path, SECURE_COOKIES="true"), db=db)
+    cookie, _ = _login_cookie_and_headers(app)
+    assert "Secure" in cookie and "Strict-Transport-Security" in app.test_client().get("/login").headers
+
+
+def test_secure_cookies_default_is_safe_in_production(tmp_path):
+    assert _prod(tmp_path).secure_cookies is True and load_settings(make_env(tmp_path)).secure_cookies is False
+
+
+def test_session_works_over_plain_http_without_secure_cookie(tmp_path, db):
+    c = create_app(_prod(tmp_path, SECURE_COOKIES="false"), db=db).test_client()
+    base = "http://203.0.113.7:8051"      # what you type in the browser: http://<server-ip>:8051
+    html = c.get("/login", base_url=base).get_data(as_text=True)
+    tok = __import__("re").search(r'name="csrf_token" value="([^"]+)"', html).group(1)
+    r = c.post("/login", data={"username": "admin", "password": "correct-horse-battery-staple", "csrf_token": tok}, base_url=base)
+    assert r.status_code == 302
+    assert c.get("/", base_url=base).status_code == 200
+
+
+def test_spoofed_forwarded_for_cannot_dodge_login_rate_limit_without_a_proxy(tmp_path, db):
+    s = load_settings(make_env(tmp_path, LOGIN_RATE_LIMIT="3 per minute"))
+    assert s.trusted_proxies == 0
+    c = create_app(s, db=db).test_client()
+    tok = csrf_token(c)
+    codes = [c.post("/login", data={"username": "admin", "password": "bad", "csrf_token": tok},
+                    headers={"X-Forwarded-For": f"198.51.100.{i}"}).status_code for i in range(5)]
+    assert codes == [401, 401, 401, 429, 429]

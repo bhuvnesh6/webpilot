@@ -1,6 +1,6 @@
 # WebPilot AI: web + worker + MongoDB. Redis is NOT defined here: the existing Redis container is reused.
 # Before the first `docker compose up`, inspect your VPS (`docker network ls`, `docker ps`) and set
-# PROXY_NETWORK / REDIS_NETWORK / REDIS_HOST in .env to the real names.
+# REDIS_NETWORK / REDIS_HOST in .env to the real names.
 name: webpilot
 
 x-app: &app
@@ -24,10 +24,12 @@ services:
     <<: *app
     container_name: webpilot-web
     security_opt: ["no-new-privileges:true"]
-    expose: ["8050"]                    # never published to the host; Nginx Proxy Manager reaches it over the proxy network
+    ports:
+      # Dashboard: http://<server-ip>:8051. Use BIND_ADDRESS=127.0.0.1 in .env to expose it only to the server itself (SSH tunnel).
+      - "${BIND_ADDRESS:-0.0.0.0}:8051:8000"
     volumes:
       - artifacts:/app/artifacts:ro     # the dashboard only reads screenshots
-    networks: [internal, proxy, redis]  # NOTE: if NPM and Redis share ONE docker network, delete the `redis` entries (here, worker, and the networks block)
+    networks: [internal, redis]
     mem_limit: 768m
 
   worker:
@@ -77,9 +79,6 @@ services:
 networks:
   internal:
     name: webpilot_internal
-  proxy:
-    external: true
-    name: ${PROXY_NETWORK:?set PROXY_NETWORK in .env (the Docker network Nginx Proxy Manager is on)}
   redis:
     external: true
     name: ${REDIS_NETWORK:?set REDIS_NETWORK in .env (the Docker network your Redis container is on)}

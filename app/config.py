@@ -48,6 +48,7 @@ class Settings:
     log_level: str
     allow_private_networks: bool
     trusted_proxies: int
+    secure_cookies: bool
     stale_task_seconds: int
     admin_wait_timeout_seconds: int
     login_rate_limit: str
@@ -88,6 +89,7 @@ class Settings:
             "Browser sandbox": "on" if self.browser_sandbox else "off",
             "Viewport": f"{self.viewport_width}x{self.viewport_height}",
             "Artifact retention (days)": self.artifact_retention_days,
+            "Secure (HTTPS-only) cookies": "on" if self.secure_cookies else "OFF (plain HTTP access)",
             "Private networks allowed": "yes (development only)" if self.allow_private_networks else "no",
         }
 
@@ -237,7 +239,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         artifact_retention_days=_int(env, "ARTIFACT_RETENTION_DAYS", 14, errors, 1, 3650),
         log_level=log_level,
         allow_private_networks=allow_private,
-        trusted_proxies=_int(env, "TRUSTED_PROXIES", 1, errors, 0, 5),
+        trusted_proxies=_int(env, "TRUSTED_PROXIES", 0, errors, 0, 5),
+        secure_cookies=_bool(env, "SECURE_COOKIES", app_env == "production"),
         stale_task_seconds=_int(env, "STALE_TASK_SECONDS", 300, errors, 30, 86400),
         admin_wait_timeout_seconds=_int(env, "ADMIN_WAIT_TIMEOUT_SECONDS", 600, errors, 30, 86400),
         login_rate_limit=env.get("LOGIN_RATE_LIMIT", "5 per minute;30 per hour").strip(),

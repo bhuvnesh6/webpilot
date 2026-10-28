@@ -28,7 +28,7 @@ def create_app(settings: Settings | None = None, db=None) -> Flask:
     app.config.update(
         SECRET_KEY=settings.secret_key,
         SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SECURE=settings.is_production,
+        SESSION_COOKIE_SECURE=settings.secure_cookies,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_NAME="webpilot_session",
         PERMANENT_SESSION_LIFETIME=12 * 3600,
@@ -61,7 +61,7 @@ def create_app(settings: Settings | None = None, db=None) -> Flask:
         resp.headers.setdefault("Referrer-Policy", "same-origin")
         if request.endpoint != "static":
             resp.headers.setdefault("Cache-Control", "no-store")
-        if settings.is_production:
+        if settings.is_production and settings.secure_cookies:
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return resp
 
@@ -114,6 +114,9 @@ def create_app(settings: Settings | None = None, db=None) -> Flask:
             return jsonify(error="Internal server error"), 500
         return render_template("error.html", code=500, message="Something went wrong on our side. Check the web logs."), 500
 
+    if settings.is_production and not settings.secure_cookies:
+        log.warning("SECURE_COOKIES is off: the dashboard is being served over plain HTTP, so the admin password and session "
+                    "cookie travel unencrypted. Restrict port access (firewall / SSH tunnel) or put HTTPS in front of it.")
     try:
         extensions.ensure_indexes()
     except Exception as exc:  # DB may still be starting; /healthz will report it

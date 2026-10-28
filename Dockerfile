@@ -42,4 +42,4 @@ RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=False, l
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=8s --start-period=40s --retries=3 CMD ["python", "scripts/healthcheck.py", "web"]
 
-CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${APP_PORT:-8050} --workers 2 --threads 4 --timeout 60 --access-logfile - wsgi:app"]
+CMD ["sh", "-c", "exec gunicorn --bind 0.0.0.0:${APP_PORT:-8000} --workers 2 --threads 4 --timeout 60 --access-logfile - wsgi:app"]
