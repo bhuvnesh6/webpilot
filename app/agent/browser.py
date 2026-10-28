@@ -132,7 +132,7 @@ class BrowserManager:
         s = self.settings
         self._pw = sync_playwright().start()
         args = ["--disable-extensions", "--disable-background-networking", "--no-first-run", "--mute-audio",
-                "--disable-component-update", "--disable-sync"]
+                "--disable-component-update", "--disable-sync", "--disable-setuid-sandbox",]
         try:
             self._browser = self._pw.chromium.launch(headless=True, chromium_sandbox=s.browser_sandbox, args=args)
         except Exception as exc:
